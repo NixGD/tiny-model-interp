@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiny-model"
+
+version = "0.1.0"
+requires-python = ">=3.12, <=3.14"
+dependencies = [
+    "pydantic>=2.12.4",
+    "torch >= 2.9.0",
+]
+
+
+[tool.setuptools.packages.find]
+include = ["tiny-model*"]
+
+[dependency-groups]
+dev = [
+    "ruff >= 0.12.0",
+    "pyright == 1.1.406", # 407 breaks pydantic dataclasses compatibility, see https://github.com/microsoft/pyright/issues/11060
+    "pytest",
+    "pre-commit",
+    "ipywidgets",
+    "ipykernel"
+]
+
+
+[tool.ruff]
+line-length = 120
+fix = true
+
+[tool.ruff.lint]
+preview = true # Enable preview rules: https://docs.astral.sh/ruff/preview/
+exclude = []
+select = [
+    "D", # pydocstyle
+    "E", # pycodestyle
+    "F", # Pyflakes
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I", # isort
+]
+ignore = [
+    "SIM102",  # Use a single `if` statement instead of nested `if` statements
+    "SIM108", # Use ternary operator instead of if/else
+    "B010",  # Do not call `setattr` with a constant attribute value. --- Motivation: `setattr` allows to avoid `# type: ignore[attr-defined]`
+    "D417", # Documentation for every parameter
+    ## Don't require docstrings for everything ##
+    "D100",  # Missing docstring in public module
+    "D101",  # Missing docstring in public class
+    "D102",  # Missing docstring in public method
+    "D103",  # Missing docstring in public function
+    "D104",  # Missing docstring in public package
+    "D105",  # Missing docstring in magic method
+    "D106",  # Missing docstring in public nested class
+    "D107",  # Missing docstring in __init__
+    "F811",  # "Redefinition of unused" arg is often needed for pytest fixtures
+    "E266",  # multiple-leading-hashes-for-block-comment
+    "E501",  # Line too long: we want to allow long string literals
+    "D205",  # 1 blank line required between summary line and description
+    "F722",  # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
+]
+
+[tool.ruff.format]
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+addopts = "-p no:pytest_shard"
+
+[tool.pyright]
+include = ['tiny-model/**']
+exclude = []
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+reportFunctionMemberAccess = true
+reportUnknownParameterType = true
+reportIncompatibleMethodOverride = true
+reportIncompatibleVariableOverride = true
+reportInconsistentConstructorType = true
+reportOverlappingOverload = true
+reportConstantRedefinition = true
+reportImportCycles = true
+reportPropertyTypeMismatch = true
+reportMissingTypeArgument = true
+reportUnnecessaryCast = true
+reportUnnecessaryComparison = true
+reportUnnecessaryContains = true
+reportUnusedExpression = true
+reportMatchNotExhaustive = true
+reportShadowedImports = true
+reportPrivateImportUsage = false
