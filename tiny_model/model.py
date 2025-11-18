@@ -65,7 +65,8 @@ class CausalSelfAttention(nn.Module):
         # manual implementation of attention
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
         att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))  # type: ignore
-        att = torch.cat([self.sinks.view(1, self.n_head, 1, 1), att], dim=-1)  # add sinks
+        sinks = self.sinks.view(1, self.n_head, 1, 1).expand(B, self.n_head, T, 1)
+        att = torch.cat([sinks, att], dim=-1)  # add sinks
         att = F.softmax(att, dim=-1)
         att = att[:, :, :, 1:]  # remove sinks
         att = self.attn_dropout(att)
