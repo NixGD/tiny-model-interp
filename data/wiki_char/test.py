@@ -1,6 +1,6 @@
 from typing import cast
-from datasets import logging
-from datasets import IterableDataset, load_dataset
+
+from datasets import IterableDataset, load_dataset, logging
 
 logging.set_verbosity_debug()
 

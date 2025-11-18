@@ -1,6 +1,7 @@
 """Prepare FineWiki dataset for character-level language modeling.
 
-script hangs due to https://github.com/huggingface/datasets/issues/7467"""
+script hangs due to https://github.com/huggingface/datasets/issues/7467
+"""
 
 import json
 import os

@@ -18,10 +18,10 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 import json
 import math
 import os
-from pathlib import Path
 import pickle
 import time
 from contextlib import nullcontext
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -232,8 +232,8 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
-            losses[k] = loss.item()
+                out = model(X, Y)
+            losses[k] = out.loss.item()
         out[split] = losses.mean()
     model.train()
     return out
@@ -312,8 +312,8 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = micro_step == gradient_accumulation_steps - 1
         with ctx:
-            logits, loss = model(X, Y)
-            loss = loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
+            out = model(X, Y)
+            loss = out.loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch("train")
         # backward pass, with gradient scaling if training in fp16
