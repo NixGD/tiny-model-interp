@@ -116,7 +116,6 @@ class CausalSelfAttention(nn.Module):
         q, k = self._apply_rotary_emb(q, k, self.freqs_cis)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        # manual implementation of attention
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
         att = lxt_divide_gradient(self.lxt_enabled, att)
 
@@ -127,8 +126,8 @@ class CausalSelfAttention(nn.Module):
         att = F.softmax(att, dim=-1)
         att = att[:, :, :, 1:]  # remove sinks
         att = self.attn_dropout(att)
-        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
 
+        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = lxt_divide_gradient(self.lxt_enabled, y)
 
         y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
@@ -136,7 +135,7 @@ class CausalSelfAttention(nn.Module):
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
-
+        
     @staticmethod
     def _precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
         """Precompute the frequency tensor for complex exponentials (RoPE)."""
@@ -171,6 +170,7 @@ class MLP(nn.Module):
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
         self.layer = layer
+        self.lxt_enabled = False
 
     def forward(self, x: torch.Tensor, cache: AlphaCache) -> torch.Tensor:
         x = self.c_fc(x)
