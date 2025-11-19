@@ -6,12 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from tiny_model.char_tokenizer import CharTokenizer
-from tiny_model.model import CacheKey
-from tiny_model.utils import REPO_ROOT
-
 from analysis.char_classes import CharClass, create_char_classes
-from analysis.utils import DEVICE, get_batch, load_model
+from analysis.utils import get_batch, load_model
+from tiny_model.char_tokenizer import CharTokenizer
+from tiny_model.utils import REPO_ROOT
 
 
 def visualize_char_class_probs(
@@ -96,7 +94,7 @@ if __name__ == "__main__":
     x_batch, y_batch = get_batch(val_data, batch_size, block_size)
 
     output = model(x_batch, targets=y_batch, enable_cache=True)
-    print(f"\n✓ Model output:")
+    print("\n✓ Model output:")
     print(f"  Loss: {output.loss.item():.4f}")
     print(f"  Output shape: {output.logits.shape}")
 
