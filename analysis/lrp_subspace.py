@@ -25,7 +25,7 @@ from analysis.utils import (
     load_model,
     to_numpy,
 )
-from tiny_model.char_tokenizer import CharTokenizer
+from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.model import GPT, CacheKey
 from tiny_model.utils import REPO_ROOT
 

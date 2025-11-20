@@ -8,7 +8,7 @@ import torch
 
 from analysis.char_classes import CharClass, create_char_classes
 from analysis.utils import get_batch, load_model
-from tiny_model.char_tokenizer import CharTokenizer
+from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.utils import REPO_ROOT
 
 

@@ -4,7 +4,7 @@ import string
 
 import torch
 
-from tiny_model.char_tokenizer import CharTokenizer
+from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 
 
 class CharClass:

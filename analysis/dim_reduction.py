@@ -12,7 +12,7 @@ from umap import UMAP
 
 from analysis.char_classes import CharClass, create_char_classes
 from analysis.utils import get_batch, load_model, to_numpy
-from tiny_model.char_tokenizer import CharTokenizer
+from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.model import CacheKey, Out
 from tiny_model.utils import REPO_ROOT
 
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     # Get batch and run model
     batch_size = 64
     x_batch, y_batch = get_batch(val_data, batch_size, model.config.block_size)
-    output = model(x_batch, targets=y_batch, enable_cache=True)
+    output = model(x_batch, targets=y_batch, cache_enabled=True, alphas_enabled=True)
     print(f"\n✓ Model output shape: {output.logits.shape}")
 
     # Static matplotlib visualization
