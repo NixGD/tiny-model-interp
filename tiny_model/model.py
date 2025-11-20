@@ -105,6 +105,23 @@ class AlphaCache:
         return list(self._cache.keys())
 
 
+class ElementwiseAffine(nn.Module):
+    """Element-wise affine transformation: scale * x + bias.
+
+    Provides independent learnable scaling and bias parameters at the start
+    of residual branches to improve learning dynamics.
+    Initialized with scale=1 and bias=0 (identity function at initialization).
+    """
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.scale = nn.Parameter(torch.ones(dim))
+        self.bias = nn.Parameter(torch.zeros(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.scale * x + self.bias
+
+
 class CausalSelfAttention(nn.Module):
     freqs_cis: torch.Tensor
     bias: torch.Tensor
@@ -114,9 +131,8 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-        # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        # regularization
+        self.norm = ElementwiseAffine(config.n_embd)
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
@@ -130,6 +146,7 @@ class CausalSelfAttention(nn.Module):
             ),
         )
         self.sinks = nn.Parameter(torch.zeros(config.n_head))
+        self.rezero = nn.Parameter(torch.zeros(1))
 
         # RoPE embeddings
         head_dim = config.n_embd // config.n_head
@@ -140,6 +157,7 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x: torch.Tensor, cache: AlphaCache) -> torch.Tensor:
         B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
+        x = self.norm(x)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
@@ -169,6 +187,7 @@ class CausalSelfAttention(nn.Module):
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
+        y = y * self.rezero
         return y
 
     @staticmethod
@@ -202,19 +221,23 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig, layer: int):
         super().__init__()
+        self.norm = ElementwiseAffine(config.n_embd)
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.relu = nn.ReLU()
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
+        self.rezero = nn.Parameter(torch.zeros(1))
         self.layer = layer
         self.lxt_enabled = False
 
     def forward(self, x: torch.Tensor, cache: AlphaCache) -> torch.Tensor:
+        x = self.norm(x)
         x = self.c_fc(x)
         x = cache.wrap(CacheKey("mlp_pre_act", self.layer), x)
         x = lxt_identity(self.lxt_enabled, self.relu, x)
         x = self.c_proj(x)
         x = self.dropout(x)
+        x = x * self.rezero
         return x
 
     def set_lxt_enabled(self, lxt_enabled: bool):
