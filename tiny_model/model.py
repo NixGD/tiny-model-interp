@@ -43,6 +43,9 @@ class CacheKey(NamedTuple):
     key: str
     layer: int | None
 
+    def __str__(self) -> str:
+        return f"{self.key}@{self.layer}"
+
 
 class AlphaCache:
     _cache_enabled: bool = False
@@ -59,9 +62,9 @@ class AlphaCache:
     ):
         self._cache_enabled = cache_enabled
         self._alphas_enabled = alphas_enabled
+        self._hooks = hooks if hooks is not None else {}
         self._cache = {}
         self._alphas = {}
-        self._hooks = hooks if hooks is not None else {}
 
     def wrap(self, key: CacheKey, x: torch.Tensor) -> torch.Tensor:
         """Wraps an activation, returning identical values but storing value & gradient of that activation."""
@@ -75,14 +78,24 @@ class AlphaCache:
         if self._alphas_enabled:
             alpha = torch.zeros_like(x, requires_grad=True)
             self._alphas[key] = alpha
-            return alpha + x
+            x = x + alpha
 
         return x
 
-    def get_grad(self, key: CacheKey) -> torch.Tensor | None:
-        return self._alphas[key].grad
+    def get_grad(self, key: CacheKey) -> torch.Tensor:
+        assert self._alphas_enabled, "Must set enable_alphas in forward pass"
+        assert self._alphas, "self._alphas is empty, have you run a forward pass?"
+        assert key in self._alphas, f"Key {key} not found in self._alphas, options: {self._alphas.keys()}"
+        grad = self._alphas[key].grad
+        assert grad is not None, (
+            "Gradient is None, have you called .backward() and made sure we are not in no_grad() context?"
+        )
+        return grad
 
     def get_value(self, key: CacheKey) -> torch.Tensor:
+        assert self._cache_enabled, "Must set enable_cache in forward pass"
+        assert self._cache, "self._cache is empty, have you run a forward pass?"
+        assert key in self._cache, f"Key {key} not found in self._cache, options: {self._cache.keys()}"
         return self._cache[key]
 
     def keys(self) -> list[CacheKey]:

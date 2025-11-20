@@ -12,7 +12,7 @@ AttributionVector = Float[Tensor, "... d_model"]
 
 
 def get_resid_attribution_vectors(
-    model: GPT, model_input: TokenInputTensor, key: CacheKey, loss_fn: LogitLossFn, centralizer: Centralizer
+    model: GPT, model_input: TokenInputTensor, key: CacheKey, loss_fn: LogitLossFn, centralizer: Centralizer | None
 ) -> AttributionVector:
     """For each batch/seqpos, returns a vector indiciating the direction of maxiumum attribution in the resid stream."""
     model.set_lxt_enabled(True)
@@ -20,12 +20,13 @@ def get_resid_attribution_vectors(
     model.zero_grad()
 
     out = model(model_input, cache_enabled=True, alphas_enabled=True)
-    loss = loss_fn(out.logits)
+    loss = loss_fn(out.logits).mean()
     loss.backward()
 
     grad = out.cache.get_grad(key)
     assert grad is not None
     acts = out.cache.get_value(key)
-    acts_centered = centralizer.center(acts, key)
-    attributions = grad * acts_centered
+    if centralizer is not None:
+        acts = centralizer.center(acts, key)
+    attributions = grad * acts
     return attributions

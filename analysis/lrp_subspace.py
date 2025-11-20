@@ -9,6 +9,7 @@ Simplified version focusing on:
 TODO: Try ICA later - it might find sparser task-relevant subspaces
 """
 
+from pathlib import Path
 from typing import cast
 
 import matplotlib.pyplot as plt
@@ -23,6 +24,7 @@ from analysis.utils import (
     flatten_keep_last,
     get_batch,
     load_model,
+    save_fig,
     to_numpy,
 )
 from tiny_model.model import GPT, CacheKey
@@ -124,11 +126,12 @@ def collect_attribution_dataset(
     return all_attributions, all_predictions
 
 
-def plot_attribution_scatter(
-    attributions_dict: dict[str, np.ndarray],
+def plot_scatter(
+    activations_dict: dict[str, np.ndarray],
     predictions: np.ndarray,
     dims: tuple[int, int] = (0, 1),
     n_plot: int = 3000,
+    out_path: Path = OUTPUT_DIR / "scatter.png",
 ) -> None:
     """Plot scatter of attributions in different bases.
 
@@ -138,7 +141,7 @@ def plot_attribution_scatter(
         dims: which two dimensions to plot
         n_plot: number of points to plot
     """
-    methods = list(attributions_dict.keys())
+    methods = list(activations_dict.keys())
     n_methods = len(methods)
 
     fig, axes = plt.subplots(1, n_methods, figsize=(5 * n_methods, 4))
@@ -151,7 +154,7 @@ def plot_attribution_scatter(
 
     scatter = None
     for ax, method in zip(axes, methods, strict=False):
-        attrs_sub = attributions_dict[method][indices]
+        attrs_sub = activations_dict[method][indices]
 
         scatter = ax.scatter(
             attrs_sub[:, dims[0]],
@@ -173,10 +176,7 @@ def plot_attribution_scatter(
     if scatter is not None:
         fig.colorbar(scatter, ax=axes, label="Logit Diff (uppercase)", pad=0.02)
     plt.tight_layout()
-
-    save_path = OUTPUT_DIR / "attribution_scatter.png"
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"✓ Saved scatter plot to: {save_path}")
+    save_fig(out_path)
     plt.close()
 
 
@@ -224,8 +224,10 @@ if __name__ == "__main__":
     model = load_model()
     model.set_lxt_enabled(True)
 
-    tokenizer = CharTokenizer(vocab_path="data/wiki_char/vocab.json")
+    tokenizer = CharTokenizer(vocab_path="data/fineweb_char/vocab.json")
     char_class = create_char_classes(tokenizer)["uppercase"]
+
+    torch.manual_seed(0)
 
     xs, ys = get_batch(batch_size=500, block_size=model.config.block_size)
     cache_key = CacheKey("resid_mid", 2)
@@ -235,14 +237,28 @@ if __name__ == "__main__":
     print(f"Predictions shape: {predictions.shape}")
 
     pca = PCA(n_components=10)
+    pca.fit(attributions)
     ica = FastICA(n_components=10, random_state=0, max_iter=200)
+    ica.fit(attributions)
     attrs_dict: dict[str, np.ndarray] = {
         "original": attributions,
-        "pca": pca.fit_transform(attributions),
-        "ica": cast(np.ndarray, ica.fit_transform(attributions)),
+        "pca": pca.transform(attributions),
+        "ica": cast(np.ndarray, ica.transform(attributions)),
     }
 
-    plot_attribution_scatter(attrs_dict, predictions, dims=(0, 1), n_plot=3000)
+    plot_scatter(attrs_dict, predictions, dims=(0, 1), out_path=OUTPUT_DIR / "scatter_attributions.png")
+
+    activations = model(xs, cache_enabled=True).cache.get_value(cache_key)
+    activations_np = flatten_keep_last(to_numpy(activations))
+    pca_activations = pca.transform(activations_np)
+    ica_activations = ica.transform(activations_np)
+
+    plot_scatter(
+        {"original": activations_np, "pca": pca_activations, "ica": ica_activations},
+        predictions,
+        dims=(0, 1),
+        out_path=OUTPUT_DIR / "scatter_activations.png",
+    )
 
     with torch.no_grad():
         out = model(xs, targets=ys, cache_enabled=True, alphas_enabled=True)

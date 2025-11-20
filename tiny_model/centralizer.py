@@ -5,7 +5,7 @@ from tiny_model.model import AlphaCache, CacheKey
 
 
 class Centralizer:
-    _mean_activations: dict[CacheKey, Float[Tensor, " d_model"]]
+    _mean_activations: dict[CacheKey, Float[Tensor, " d_model"]] = {}
 
     def fit(self, cache: AlphaCache) -> None:
         for key in cache.keys():  # noqa: SIM118

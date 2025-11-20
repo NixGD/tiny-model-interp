@@ -13,13 +13,13 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 from analysis.char_classes import CharClass
-from tiny_model.model import GPT, CacheKey, GPTConfig, Out
+from tiny_model.model import GPT, CacheKey, GPTConfig, ModelOut
 from tiny_model.utils import REPO_ROOT
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def load_model(checkpoint_path: str | Path = REPO_ROOT / "out-wiki-char/ckpt.pt") -> GPT:
+def load_model(checkpoint_path: str | Path = REPO_ROOT / "models/web-char-11-20/ckpt.pt") -> GPT:
     """Load a trained GPT model from checkpoint."""
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
     model_args = checkpoint["model_args"]
@@ -34,7 +34,7 @@ def load_model(checkpoint_path: str | Path = REPO_ROOT / "out-wiki-char/ckpt.pt"
 def get_batch(
     batch_size: int,
     block_size: int = 256,
-    data_path: Path = REPO_ROOT / "data/wiki_char" / "val.bin",
+    data_path: Path = REPO_ROOT / "data/fineweb_char" / "val.bin",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Get a batch of data, returning input tokens and target tokens."""
     memmap = np.memmap(data_path, dtype=np.uint16, mode="r")
@@ -73,7 +73,7 @@ def variance_curve_pca(X: np.ndarray, max_components: int) -> np.ndarray:
     return np.cumsum(pca.explained_variance_ratio_)
 
 
-def extract_activations(output: Out, cache_key: CacheKey) -> np.ndarray:
+def extract_activations(output: ModelOut, cache_key: CacheKey) -> np.ndarray:
     """Extract and flatten activations from model output cache."""
     return flatten_keep_last(to_numpy(output.cache.get_value(cache_key)))
 
@@ -81,7 +81,7 @@ def extract_activations(output: Out, cache_key: CacheKey) -> np.ndarray:
 Metric = Literal["prob", "logit_diff"]
 
 
-def get_metric(output: Out, char_class: CharClass, metric: Metric) -> np.ndarray:
+def get_metric(output: ModelOut, char_class: CharClass, metric: Metric) -> np.ndarray:
     """Get the appropriate metric for a character class."""
     fn = char_class.get_probabilities if metric == "prob" else char_class.get_logit_diff
     return to_numpy(fn(output.logits)).flatten()
@@ -91,7 +91,7 @@ def get_metric(output: Out, char_class: CharClass, metric: Metric) -> np.ndarray
 
 
 def compute_pls_r2_curve(
-    output: Out, cache_key: CacheKey, char_class: CharClass, metric: Metric, max_components: int
+    output: ModelOut, cache_key: CacheKey, char_class: CharClass, metric: Metric, max_components: int
 ) -> list[float]:
     """Returns curve of R² explained by n PLS components for the given metric and model activations."""
     activations = extract_activations(output, cache_key)
@@ -115,7 +115,7 @@ def compute_pls_r2_curve(
 
 
 def compute_pca_r2_curve(
-    output: Out, cache_key: CacheKey, char_class: CharClass, metric: Metric, max_components: int
+    output: ModelOut, cache_key: CacheKey, char_class: CharClass, metric: Metric, max_components: int
 ) -> list[float]:
     """Compute the amount of y-variance explained by the first n-PCA components of X.
 

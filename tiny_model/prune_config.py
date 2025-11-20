@@ -1,5 +1,6 @@
 import string
 from abc import ABC, abstractmethod
+from typing import cast
 
 import torch
 from jaxtyping import Bool, Float, Int
@@ -13,7 +14,7 @@ from tiny_model.tokenizer import CharTokenizer
 type TokenInputTensor = Int[Tensor, "batch seqpos"]
 type SeqposMaskTensor = Bool[Tensor, "batch seqpos"]
 
-type Subspace = None | Float[Tensor, "n_components d_model"]  # tensor must have orthonormal columns
+type Subspace = Float[Tensor, "n_components d_model"]  # tensor must have orthonormal columns
 
 
 class SeqposMask(ABC):
@@ -39,31 +40,51 @@ class WordMask(SeqposMask):
         return mask
 
 
-def project_to_subspace(x: Float[Tensor, "... d_model"], subspace: Subspace) -> Float[Tensor, "... d_model"]:
-    """Return tensor of the same shape of x but with the activations outside the subspace set to 0."""
-    return x if subspace is None else x @ subspace.T @ subspace
-
-
 def get_replace_hook(hook_key: CacheKey, subspace: Subspace, cache: AlphaCache, centralizer: Centralizer) -> HookFn:
     """Returns a hook which replaces the activation outside of the subspace with the value from x' (taken from the cache)."""
 
-    def hook(x: torch.Tensor) -> torch.Tensor:
-        if subspace is None:
-            return x
+    def center(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+        return centralizer.center(x, hook_key)
 
-        x_centered = centralizer.center(x, hook_key)
-        x_within_subspace = project_to_subspace(x_centered, subspace)
-        other_act_centered = centralizer.center(cache.get_value(hook_key), hook_key)
-        other_act_outside_subspace = other_act_centered - project_to_subspace(other_act_centered, subspace)
-        recombined = x_within_subspace + other_act_outside_subspace
-        return centralizer.uncenter(recombined, hook_key)
+    def uncenter(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+        return centralizer.uncenter(x, hook_key)
+
+    def project(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+        return x @ subspace.T @ subspace
+
+    def hook(x: torch.Tensor) -> torch.Tensor:
+        x_in_subspace = project(center(x))
+        x_prime_centered = center(cache.get_value(hook_key))
+        x_prime_ouside_subspace = x_prime_centered - project(x_prime_centered)
+        ablated_centered = x_in_subspace + x_prime_ouside_subspace
+        return uncenter(ablated_centered)
 
     return hook
 
 
-class PruningConfig(BaseModel):
-    subspaces: dict[CacheKey, Subspace]
+class Sentinel:
+    pass
+
+
+class PruningConfig(BaseModel, arbitrary_types_allowed=True):
+    subspaces: dict[CacheKey, Subspace | None]
     seqpos: SeqposMask | None
+
+    def __or__(self, other: "PruningConfig") -> "PruningConfig":
+        """Merge two PruningConfig instances. The right operand overwrites the left for same keys and seqpos."""
+        merged_subspaces = {**self.subspaces, **other.subspaces}
+        merged_seqpos = other.seqpos or self.seqpos  # default to other.seqpos if non-None
+        return PruningConfig(subspaces=merged_subspaces, seqpos=merged_seqpos)
+
+    def with_prunes(
+        self, subspaces: dict[CacheKey, Subspace] | None = None, seqpos: SeqposMask | None | type[Sentinel] = Sentinel
+    ) -> "PruningConfig":
+        """Create a new PruningConfig with updated subspaces and/or seqpos. Overwrites existing values."""
+        updated_subspaces = {**self.subspaces}
+        if subspaces is not None:
+            updated_subspaces.update(subspaces)
+        updated_seqpos = seqpos if seqpos is not Sentinel else self.seqpos
+        return PruningConfig(subspaces=updated_subspaces, seqpos=cast(SeqposMask | None, updated_seqpos))
 
     def get_hook_dict(self, other_acts_cache: AlphaCache, centralizer: Centralizer) -> dict[CacheKey, HookFn]:
         if self.seqpos is not None:
@@ -72,5 +93,6 @@ class PruningConfig(BaseModel):
         hooks = {
             key: get_replace_hook(key, subspace, other_acts_cache, centralizer)
             for key, subspace in self.subspaces.items()
+            if subspace is not None
         }
         return hooks
