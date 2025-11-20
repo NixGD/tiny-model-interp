@@ -10,6 +10,7 @@ from typing import cast
 
 import numpy as np
 from datasets import IterableDataset, load_dataset
+from rich import progress
 
 from tiny_model.tokenizer.ascii_normalization import normalize_text
 
@@ -47,8 +48,12 @@ def get_dataset():
 splits = get_dataset()
 output_dir = os.path.dirname(__file__)
 for split_name, examples in splits.items():
-    print(f"Processing {split_name} split...")
-    all_tokens = np.concatenate([np.array(ex["ids"], dtype=np.uint16) for ex in examples])
+    all_tokens = np.concatenate(
+        [
+            np.array(ex["ids"], dtype=np.uint16)
+            for ex in progress.track(examples, description=f"Processing {split_name}")
+        ]
+    )
     filename = os.path.join(output_dir, f"{split_name}.bin")
     all_tokens.tofile(filename)
     size_mb = len(all_tokens) * 2 / (1024 * 1024)  # uint16 = 2 bytes
