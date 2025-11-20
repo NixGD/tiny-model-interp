@@ -1,23 +1,22 @@
 """Character class definitions for analysis."""
 
 import string
+from collections.abc import Callable
 
 import torch
+from jaxtyping import Float
+from torch import Tensor
 
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
+
+LogitTensor = Float[Tensor, "... vocab_size"]
+LogitLossFn = Callable[[LogitTensor], Float[Tensor, "..."]]
 
 
 class CharClass:
     """A class representing a category of characters (e.g., numerals, punctuation)."""
 
     def __init__(self, name: str, chars: str, tokenizer: CharTokenizer):
-        """Initialize a character class.
-
-        Args:
-            name: Name of this character class
-            chars: String containing all characters in this class
-            tokenizer: Tokenizer to use for getting indices
-        """
         self.name = name
         self.chars = chars
         self.indices = self._get_indices(tokenizer)
@@ -27,21 +26,12 @@ class CharClass:
         """Get token indices for characters in this class."""
         return [tokenizer.stoi[c] for c in self.chars if c in tokenizer.stoi]
 
-    def get_probabilities(self, logits: torch.Tensor) -> torch.Tensor:
-        """Compute probability mass on this character class.
-
-        Args:
-            logits: model logits of shape (..., vocab_size)
-                    Supports vectorization over batch and sequence dimensions
-
-        Returns:
-            probabilities: sum of probabilities for this class, shape (...)
-                          Preserves all dimensions except the vocab dimension
-        """
+    def get_probabilities(self, logits: LogitTensor) -> Float[Tensor, "..."]:
+        """Loss function for the probability mass on this character class."""
         probs = torch.softmax(logits, dim=-1)
         return probs[..., self.logit_mask].sum(dim=-1)
 
-    def get_logit_diff(self, logits: torch.Tensor) -> torch.Tensor:
+    def get_logit_diff(self, logits: LogitTensor) -> Float[Tensor, "..."]:
         """Difference between average logits of toks within class vs average logits of toks outside class."""
         mean_logits_within = logits[..., self.logit_mask].mean(dim=-1)
         mean_logits_outside = logits[..., ~self.logit_mask].mean(dim=-1)

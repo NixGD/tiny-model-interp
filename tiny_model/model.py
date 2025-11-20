@@ -222,7 +222,7 @@ class Block(nn.Module):
         self.mlp.set_lxt_enabled(lxt_enabled)
 
 
-class Out(NamedTuple):
+class ModelOut(NamedTuple):
     logits: torch.Tensor
     loss: torch.Tensor | None
     cache: AlphaCache
@@ -276,7 +276,7 @@ class GPT(nn.Module):
         cache_enabled: bool = False,
         alphas_enabled: bool = False,
         hooks: dict[CacheKey, HookFn] | None = None,
-    ) -> Out:
+    ) -> ModelOut:
         seqlen = idx.size(1)
         assert seqlen <= self.config.block_size, (
             f"Cannot forward sequence of length {seqlen}, block size is only {self.config.block_size}"
@@ -298,7 +298,7 @@ class GPT(nn.Module):
         else:
             loss = None
 
-        return Out(logits=logits, loss=loss, cache=cache)
+        return ModelOut(logits=logits, loss=loss, cache=cache)
 
     def __call__(
         self,
@@ -307,7 +307,7 @@ class GPT(nn.Module):
         cache_enabled: bool = False,
         alphas_enabled: bool = False,
         hooks: dict[CacheKey, HookFn] | None = None,
-    ) -> Out:
+    ) -> ModelOut:
         return self.forward(idx, targets, cache_enabled, alphas_enabled, hooks)
 
     def configure_optimizers(

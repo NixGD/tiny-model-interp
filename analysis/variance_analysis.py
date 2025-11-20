@@ -14,7 +14,7 @@ from analysis.utils import (
     save_fig,
     variance_curve_pca,
 )
-from tiny_model.model import GPT, CacheKey, Out
+from tiny_model.model import GPT, CacheKey, ModelOut
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.utils import REPO_ROOT
 
@@ -23,7 +23,7 @@ OUTPATH.mkdir(parents=True, exist_ok=True)
 
 
 def plot_variance_explained(
-    output: Out,
+    output: ModelOut,
     cache_key: CacheKey,
     char_classes: Iterable[CharClass],
     metric: Metric = "prob",
@@ -79,7 +79,7 @@ def _get_resid_stream_cache_keys(model: GPT) -> list[CacheKey]:
 
 
 def plot_residual_stream_r2(
-    output: Out,
+    output: ModelOut,
     char_class: CharClass,
     model: GPT,
     max_components: int = 25,
