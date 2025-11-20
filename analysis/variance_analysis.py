@@ -42,7 +42,7 @@ def plot_variance_explained(
         r2_scores = compute_pls_r2_curve(output, cache_key, char_class, metric, max_components)
         ax.plot(
             range(1, len(r2_scores) + 1),
-            r2_scores * 100,
+            r2_scores,
             label=f"PLS R² {char_class.name}",
         )
 
@@ -50,7 +50,7 @@ def plot_variance_explained(
         variance_curve = variance_curve_pca(activations, max_components)
         ax.plot(
             range(1, len(variance_curve) + 1),
-            variance_curve * 100,
+            variance_curve,
             label="PCA (centered)",
             color="black",
         )
@@ -63,9 +63,9 @@ def plot_variance_explained(
     ax.legend(loc="lower right")
     ax.grid(True, alpha=0.2)
     ax.set_xlim(0, max_components)
-    ax.set_ylim(None, 100)
+    ax.set_ylim(None, 1)
     plt.tight_layout()
-    save_fig(OUTPATH / f"variance_explained_{cache_key.key}@L{cache_key.layer}.png")
+    save_fig(OUTPATH / f"variance_explained_{cache_key}.png")
 
 
 def _get_resid_stream_cache_keys(model: GPT) -> list[CacheKey]:
@@ -122,12 +122,14 @@ def plot_residual_stream_r2(
 
 # %%
 model = load_model()
-tokenizer = CharTokenizer(vocab_path="data/wiki_char/vocab.json")
+tokenizer = CharTokenizer()
 CHAR_CLASSES = create_char_classes(tokenizer)
 
 xs, ys = get_batch(batch_size=500, block_size=model.config.block_size)
-output = model(xs, targets=ys, cache_enabled=True, alphas_enabled=True)
-print(f"\n✓ Model output shape: {output.logits.shape}")
+output = model(xs, targets=ys, cache_enabled=True)
+print(f"Model logits shape: {output.logits.shape}")
+assert output.loss is not None
+print("Output loss: ", output.loss.mean().item())
 
 
 for resid_key in _get_resid_stream_cache_keys(model):

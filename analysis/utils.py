@@ -97,9 +97,6 @@ def compute_pls_r2_curve(
     activations = extract_activations(output, cache_key)
     predictions_flat = get_metric(output, char_class, metric)
 
-    print(f"Activations shape: {activations.shape}")
-    print(f"Predictions shape: {predictions_flat.shape}")
-
     max_components = min(max_components, activations.shape[1])
     pls = PLSRegression(n_components=max_components)
     pls.fit(activations, predictions_flat)
@@ -111,7 +108,7 @@ def compute_pls_r2_curve(
         y_pred = (acts_centered @ coef_n.T).flatten() + pls._y_mean
         return r2_score(predictions_flat, y_pred)
 
-    return [get_r2_score(n_comp) for n_comp in track(range(1, max_components + 1), description="PLS R² curve")]
+    return [get_r2_score(n_comp) for n_comp in range(1, max_components + 1)]
 
 
 def compute_pca_r2_curve(

@@ -224,7 +224,7 @@ if __name__ == "__main__":
     model = load_model()
     model.set_lxt_enabled(True)
 
-    tokenizer = CharTokenizer(vocab_path="data/fineweb_char/vocab.json")
+    tokenizer = CharTokenizer()
     char_class = create_char_classes(tokenizer)["uppercase"]
 
     torch.manual_seed(0)
