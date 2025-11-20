@@ -100,7 +100,7 @@ def plot_residual_stream_r2(
 
     # Compute R² for each cache key
     for i, cache_key in enumerate(_get_resid_stream_cache_keys(model)):
-        r2_scores = compute_pls_r2_curve(output, cache_key, char_class, metric)
+        r2_scores = compute_pls_r2_curve(output, cache_key, char_class, metric, max_components)
         color = colormap(i / max(1, len(cache_keys) - 1))
         label = f"{cache_key.key}@L{cache_key.layer}" if cache_key.layer is not None else cache_key.key
 

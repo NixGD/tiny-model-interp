@@ -6,6 +6,7 @@ from typing import Literal
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from rich.progress import track
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
@@ -89,7 +90,9 @@ def get_metric(output: Out, char_class: CharClass, metric: Metric) -> np.ndarray
 #### r2 curve (r^2 for different number of components in the basis) ####
 
 
-def compute_pls_r2_curve(output: Out, cache_key: CacheKey, char_class: CharClass, metric: Metric) -> list[float]:
+def compute_pls_r2_curve(
+    output: Out, cache_key: CacheKey, char_class: CharClass, metric: Metric, max_components: int
+) -> list[float]:
     """Returns curve of R² explained by n PLS components for the given metric and model activations."""
     activations = extract_activations(output, cache_key)
     predictions_flat = get_metric(output, char_class, metric)
@@ -97,17 +100,18 @@ def compute_pls_r2_curve(output: Out, cache_key: CacheKey, char_class: CharClass
     print(f"Activations shape: {activations.shape}")
     print(f"Predictions shape: {predictions_flat.shape}")
 
-    pls = PLSRegression(n_components=activations.shape[1])
+    max_components = min(max_components, activations.shape[1])
+    pls = PLSRegression(n_components=max_components)
     pls.fit(activations, predictions_flat)
     acts_centered = activations - pls._x_mean
 
-    def _get_y_pred(n_components: int) -> np.ndarray:
+    def get_r2_score(n_components: int) -> float:
         """Get the predictions from PLS components."""
         coef_n = (pls._y_std / pls._x_std) * (pls.y_loadings_[:, :n_components] @ pls.x_rotations_[:, :n_components].T)
-        return (acts_centered @ coef_n.T).flatten() + pls._y_mean
+        y_pred = (acts_centered @ coef_n.T).flatten() + pls._y_mean
+        return r2_score(predictions_flat, y_pred)
 
-    y_pred = [_get_y_pred(n_comp) for n_comp in range(1, activations.shape[1] + 1)]
-    return [r2_score(predictions_flat, y_pred) for y_pred in y_pred]
+    return [get_r2_score(n_comp) for n_comp in track(range(1, max_components + 1), description="PLS R² curve")]
 
 
 def compute_pca_r2_curve(
@@ -128,4 +132,4 @@ def compute_pca_r2_curve(
         reg.fit(acts_in_pca, metric_values)
         return reg.score(acts_in_pca, metric_values)
 
-    return [_get_r2_score(n_comp) for n_comp in range(1, max_components + 1)]
+    return [_get_r2_score(n_comp) for n_comp in track(range(1, max_components + 1), description="PCA R² curve")]

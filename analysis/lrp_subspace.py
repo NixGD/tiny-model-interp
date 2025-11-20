@@ -228,10 +228,6 @@ if __name__ == "__main__":
     char_class = create_char_classes(tokenizer)["uppercase"]
 
     xs, ys = get_batch(batch_size=500, block_size=model.config.block_size)
-    output = model(xs, targets=ys, enable_cache=True)
-
-    print(f"✓ Model output shape: {output.logits.shape}")
-
     cache_key = CacheKey("resid_mid", 2)
     attributions, predictions = compute_lrp_attributions(model, xs, cache_key, char_class)
 
@@ -239,7 +235,7 @@ if __name__ == "__main__":
     print(f"Predictions shape: {predictions.shape}")
 
     pca = PCA(n_components=10)
-    ica = FastICA(n_components=10, random_state=0, max_iter=20)
+    ica = FastICA(n_components=10, random_state=0, max_iter=200)
     attrs_dict: dict[str, np.ndarray] = {
         "original": attributions,
         "pca": pca.fit_transform(attributions),
@@ -248,11 +244,13 @@ if __name__ == "__main__":
 
     plot_attribution_scatter(attrs_dict, predictions, dims=(0, 1), n_plot=3000)
 
-    out = model(xs, targets=ys, enable_cache=True)
+    with torch.no_grad():
+        out = model(xs, targets=ys, cache_enabled=True, alphas_enabled=True)
 
-    max_components = 20
+    model = None
+    max_components = 10
     r2_dict = {
-        "pls": compute_pls_r2_curve(out, cache_key, char_class, "logit_diff")[:max_components],
+        "pls": compute_pls_r2_curve(out, cache_key, char_class, "logit_diff", max_components),
         "pca": compute_pca_r2_curve(out, cache_key, char_class, "logit_diff", max_components),
     }
     plot_prediction_r2(r2_dict, save_path=str(OUTPUT_DIR / "prediction_r2.png"))
