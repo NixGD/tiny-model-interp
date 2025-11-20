@@ -77,7 +77,7 @@ dtype = (
 compile = True  # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
 config_keys = [k for k, v in globals().items() if not k.startswith("_") and isinstance(v, (int, float, bool, str))]
-exec(open("configurator.py").read())  # overrides from command line or config file
+exec(open("configurator.py").read())  # overrides from command line or config file  # noqa: SIM115
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
 # -----------------------------------------------------------------------------
 
@@ -182,7 +182,7 @@ elif init_from == "resume":
     # fix the keys of the state dictionary :(
     # honestly no idea how checkpoints sometimes get this prefix, have to debug more
     unwanted_prefix = "_orig_mod."
-    for k, v in list(state_dict.items()):
+    for k, _ in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
@@ -200,6 +200,8 @@ elif init_from.startswith("gpt2"):
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
     model_args["block_size"] = block_size  # so that the checkpoint will have the right value
+
+assert isinstance(model, GPT)
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
@@ -224,7 +226,7 @@ if ddp:
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
-def estimate_loss():
+def estimate_loss() -> dict[str, float]:
     out = {}
     model.eval()
     for split in ["train", "val"]:
@@ -232,15 +234,14 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                out = model(X, Y)
-            losses[k] = out.loss.item()
+                losses[k] = model(X, Y).loss.item()
         out[split] = losses.mean()
     model.train()
     return out
 
 
 # learning rate decay scheduler (cosine with warmup)
-def get_lr(it):
+def get_lr(it: int) -> float:
     # 1) linear warmup for warmup_iters steps
     if it < warmup_iters:
         return learning_rate * (it + 1) / (warmup_iters + 1)
@@ -312,8 +313,7 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = micro_step == gradient_accumulation_steps - 1
         with ctx:
-            out = model(X, Y)
-            loss = out.loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
+            loss = model(X, Y).loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch("train")
         # backward pass, with gradient scaling if training in fp16
@@ -336,10 +336,7 @@ while True:
         # get loss as float. note: this is a CPU-GPU sync point
         # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
         lossf = loss.item() * gradient_accumulation_steps
-        if local_iter_num >= 5:  # let the training loop settle a bit
-            mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
-            running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt * 1000:.2f}ms, mfu {running_mfu * 100:.2f}%")
+        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt * 1000:.2f}ms")
     iter_num += 1
     local_iter_num += 1
 

@@ -14,8 +14,8 @@ from analysis.utils import (
     save_fig,
     variance_curve_pca,
 )
-from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.model import GPT, CacheKey, Out
+from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.utils import REPO_ROOT
 
 OUTPATH = REPO_ROOT / "analysis/out/variance_analysis/"
@@ -39,7 +39,7 @@ def plot_variance_explained(
         _, ax = plt.subplots(figsize=figsize)
 
     for char_class in char_classes:
-        r2_scores = compute_pls_r2_curve(output, cache_key, char_class, metric)
+        r2_scores = compute_pls_r2_curve(output, cache_key, char_class, metric, max_components)
         ax.plot(
             range(1, len(r2_scores) + 1),
             r2_scores * 100,
@@ -81,6 +81,7 @@ def _get_resid_stream_cache_keys(model: GPT) -> list[CacheKey]:
 def plot_residual_stream_r2(
     output: Out,
     char_class: CharClass,
+    model: GPT,
     max_components: int = 25,
     figsize: tuple[int, int] = (8, 6),
     cmap: str = "viridis",
@@ -144,6 +145,7 @@ for char_class in CHAR_CLASSES.values():
     plot_residual_stream_r2(
         output,
         char_class,
+        model,
         max_components=25,
         metric="logit_diff",
     )

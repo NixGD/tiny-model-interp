@@ -237,7 +237,7 @@ class GPT(nn.Module):
 
         self.token_embed = nn.Embedding(config.vocab_size, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
-        self.blocks: nn.ModuleList[Block] = nn.ModuleList([Block(config, layer) for layer in range(config.n_layer)])
+        self.blocks: nn.ModuleList = nn.ModuleList([Block(config, layer) for layer in range(config.n_layer)])
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # init all weights
@@ -369,4 +369,5 @@ class GPT(nn.Module):
 
     def set_lxt_enabled(self, lxt_enabled: bool):
         for block in self.blocks:
+            assert isinstance(block, Block)
             block.set_lxt_enabled(lxt_enabled)
