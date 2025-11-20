@@ -7,11 +7,11 @@ eval_iters = 25
 log_interval = 50
 
 # save checkpoints when validation improves
-always_save_checkpoint = False
+always_save_checkpoint = True
 
-wandb_log = False  # override via command line if you like
-wandb_project = "gutenberg-char"
-wandb_run_name = "mini-gpt"
+wandb_log = True  # override via command line if you like
+wandb_project = "tiny-model-training"
+wandb_run_name = "test-rezero"
 
 dataset = "fineweb_char"
 gradient_accumulation_steps = 1
@@ -33,5 +33,5 @@ beta2 = 0.99  # make a bit bigger because number of tokens per iter is small
 warmup_iters = 100  # not super necessary potentially
 
 # on macbook also add
-device = "cpu"  # run on cpu only
-compile = False  # do not torch compile the model
+# device = "cpu"  # run on cpu only
+# compile = False  # do not torch compile the model

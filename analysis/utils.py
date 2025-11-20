@@ -25,6 +25,7 @@ def load_model(checkpoint_path: str | Path = REPO_ROOT / "models/web-char-11-20/
     model_args = checkpoint["model_args"]
     model = GPT(GPTConfig(**model_args))
     state_dict = checkpoint["model"]
+    state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict)
     model.to(DEVICE)
     model.eval()

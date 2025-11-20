@@ -131,9 +131,8 @@ def visualize_activations_2d_interactive(
     Returns:
         embedding: 2D embedding of shape (n_samples, 2)
     """
-    # activations = flatten_keep_last(to_numpy(output.cache.get_value(cache_key)))
     batch_size, seq_len, _ = output.logits.shape
-    activations = flatten_keep_last(to_numpy(output.logits))
+    activations = flatten_keep_last(to_numpy(output.cache.get_value(cache_key)))
     predictions = to_numpy(char_class.get_probabilities(output.logits)).flatten()
 
     n_components = max(2, *dims) + 1

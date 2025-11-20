@@ -43,21 +43,18 @@ class WordMask(SeqposMask):
 def get_replace_hook(hook_key: CacheKey, subspace: Subspace, cache: AlphaCache, centralizer: Centralizer) -> HookFn:
     """Returns a hook which replaces the activation outside of the subspace with the value from x' (taken from the cache)."""
 
-    def center(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
-        return centralizer.center(x, hook_key)
-
-    def uncenter(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
-        return centralizer.uncenter(x, hook_key)
+    x_prime = cache.get_value(hook_key)
 
     def project(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
-        return x @ subspace.T @ subspace
+        _subspace = subspace.to(x)
+        return x @ _subspace.T @ _subspace
 
     def hook(x: torch.Tensor) -> torch.Tensor:
-        x_in_subspace = project(center(x))
-        x_prime_centered = center(cache.get_value(hook_key))
-        x_prime_ouside_subspace = x_prime_centered - project(x_prime_centered)
-        ablated_centered = x_in_subspace + x_prime_ouside_subspace
-        return uncenter(ablated_centered)
+        """We want to replace the value of x with the value of x' outside of our subspace.
+
+        This is equal to P(x) + (x' - P(x')) = P(x - x') + x'
+        """
+        return project(x - x_prime) + x_prime
 
     return hook
 
