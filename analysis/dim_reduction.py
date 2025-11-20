@@ -11,21 +11,21 @@ from sklearn.manifold import TSNE
 from umap import UMAP
 
 from analysis.char_classes import CharClass, create_char_classes
-from analysis.utils import get_batch, load_model, to_numpy
-from tiny_model.model import CacheKey, Out
+from analysis.utils import flatten_keep_last, get_batch, load_model, to_numpy
+from tiny_model.model import CacheKey, ModelOut
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
-from tiny_model.utils import REPO_ROOT
+
+# %%
 
 
 def visualize_activations_2d(
-    output: Out,
+    output: ModelOut,
     cache_key: CacheKey,
     char_class: CharClass,
     method: str = "umap",
     title: str = "Activation Visualization",
     save_path: str | None = None,
     figsize: tuple[int, int] = (8, 8),
-    **method_kwargs,
 ):
     """Visualize high-dimensional activations in 2D with color-coded labels.
 
@@ -52,32 +52,26 @@ def visualize_activations_2d(
 
     # Apply dimensionality reduction
     if method == "pca":
-        reducer = PCA(n_components=2, **method_kwargs)
+        reducer = PCA(n_components=2)
         embedding = reducer.fit_transform(activations)
         explained_var = reducer.explained_variance_ratio_
         method_label = f"PCA (var: {explained_var[0]:.2%}, {explained_var[1]:.2%})"
     elif method == "umap":
-        reducer = UMAP(n_components=2, **method_kwargs)
+        reducer = UMAP(n_components=2)
         embedding = reducer.fit_transform(activations)
         method_label = "UMAP"
     elif method == "tsne":
-        reducer = TSNE(n_components=2, **method_kwargs)
+        reducer = TSNE(n_components=2)
         embedding = reducer.fit_transform(activations)
         method_label = "t-SNE"
-    elif method == "lda":
-        reducer = LDA(n_components=1, **method_kwargs)
-        embedding_1d = reducer.fit_transform(activations, predictions > 0.5)
-        embedding = np.column_stack([embedding_1d, np.random.randn(len(embedding_1d)) * 0.1])
-        method_label = "LDA (supervised)"
     elif method == "pls":
-        reducer = PLSRegression(n_components=2, **method_kwargs)
+        reducer = PLSRegression(n_components=2)
         reducer.fit(activations, predictions)
         embedding = reducer.transform(activations)
         method_label = "PLS (supervised)"
     else:
         raise ValueError(f"Unknown method: {method}")
 
-    # Create visualization
     plt.figure(figsize=figsize)
 
     plt.scatter(
@@ -109,17 +103,15 @@ def visualize_activations_2d(
 
 
 def visualize_activations_2d_interactive(
-    output: Out,
+    output: ModelOut,
     input_tokens: torch.Tensor,
     cache_key: CacheKey,
     char_class: CharClass,
     tokenizer: CharTokenizer,
     method: str = "umap",
     title: str = "Activation Visualization",
-    save_path: str | None = None,
     context_chars: int = 20,
     dims: tuple[int, int] = (0, 1),
-    **method_kwargs,
 ):
     """Interactive Plotly visualization with hover text showing decoded inputs.
 
@@ -139,56 +131,57 @@ def visualize_activations_2d_interactive(
     Returns:
         embedding: 2D embedding of shape (n_samples, 2)
     """
-    activations = to_numpy(output.cache.get_value(cache_key))
-    batch_size, seq_len, hidden_dim = activations.shape
-    activations_flat = activations.reshape(-1, hidden_dim)
-
-    predictions = to_numpy(char_class.get_probabilities(output.logits))
-    predictions_flat = predictions.reshape(-1)
+    # activations = flatten_keep_last(to_numpy(output.cache.get_value(cache_key)))
+    batch_size, seq_len, _ = output.logits.shape
+    activations = flatten_keep_last(to_numpy(output.logits))
+    predictions = to_numpy(char_class.get_probabilities(output.logits)).flatten()
 
     n_components = max(2, *dims) + 1
 
     # Apply dimensionality reduction
     if method == "pca":
-        reducer = PCA(n_components=n_components, **method_kwargs)
-        embedding = reducer.fit_transform(activations_flat)
+        reducer = PCA(n_components=n_components)
+        embedding = reducer.fit_transform(activations)
         explained_var = reducer.explained_variance_ratio_
         method_label = f"PCA (var: {explained_var[0]:.2%}, {explained_var[1]:.2%})"
     elif method == "umap":
-        reducer = UMAP(n_components=n_components, **method_kwargs)
-        embedding = reducer.fit_transform(activations_flat)
+        reducer = UMAP(n_components=n_components)
+        embedding = reducer.fit_transform(activations)
         method_label = "UMAP"
     elif method == "tsne":
-        reducer = TSNE(n_components=n_components, **method_kwargs)
-        embedding = reducer.fit_transform(activations_flat)
+        reducer = TSNE(n_components=n_components)
+        embedding = reducer.fit_transform(activations)
         method_label = "t-SNE"
-    elif method == "lda":
-        reducer = LDA(n_components=1, **method_kwargs)
-        embedding_1d = reducer.fit_transform(activations_flat, predictions_flat > 0.5)
-        embedding = np.column_stack([embedding_1d, np.random.randn(len(embedding_1d)) * 0.1])
-        method_label = "LDA (supervised)"
     elif method == "pls":
-        reducer = PLSRegression(n_components=n_components, **method_kwargs)
-        reducer.fit(activations_flat, predictions_flat)
-        embedding = reducer.transform(activations_flat)
+        reducer = PLSRegression(n_components=n_components)
+        reducer.fit(activations, predictions)
+        embedding = reducer.transform(activations)
         method_label = "PLS (supervised)"
     else:
         raise ValueError(f"Unknown method: {method}")
 
     # Create hover text with decoded context
+
+    next_token_probs = torch.softmax(output.logits, dim=-1)
     hover_texts = []
     for batch_idx in range(batch_size):
-        for pos_idx in range(seq_len):
+        for pos_idx in range(seq_len - 1):
             start_pos = max(0, pos_idx - context_chars)
-            context_tokens = input_tokens[batch_idx, start_pos:pos_idx].tolist()
+            context_tokens = input_tokens[batch_idx, start_pos : pos_idx + 1].tolist()
+            next_token = input_tokens[batch_idx, pos_idx + 1].item()
+            next_token_text = tokenizer.decode_one(next_token)
             context_text = tokenizer.decode(context_tokens)
 
-            prob = predictions_flat[batch_idx * seq_len + pos_idx]
+            prob = predictions[batch_idx * seq_len + pos_idx]
             hover_text = (
                 f"Batch: {batch_idx}, Pos: {pos_idx}<br>"
-                f"Context: {repr(context_text)}<br>"
+                f"{repr(context_text)} -> {repr(next_token_text)}<br>"
                 f"{char_class.name} prob: {prob:.3f}"
             )
+
+            top3 = torch.topk(next_token_probs[batch_idx, pos_idx], k=3)
+            for tok_id, prob in zip(top3.indices, top3.values, strict=True):
+                hover_text += f"<br>{tokenizer.decode_one(tok_id.item())!r}\t{prob:.1%}"
             hover_texts.append(hover_text)
 
     # Create interactive scatter plot
@@ -201,11 +194,13 @@ def visualize_activations_2d_interactive(
             mode="markers",
             marker=dict(
                 size=4,
-                color=predictions_flat,
+                color=predictions,
                 colorscale="Viridis",
                 showscale=True,
                 colorbar=dict(title=f"{char_class.name}<br>probability"),
                 opacity=0.7,
+                cmin=0,
+                cmax=1,
             ),
             text=hover_texts,
             hovertemplate="%{text}<extra></extra>",
@@ -214,40 +209,27 @@ def visualize_activations_2d_interactive(
 
     fig.update_layout(
         title=f"{title}<br>{method_label}",
-        xaxis_title=f"Component {dims[0]}" if method != "lda" else f"Discriminant {dims[0]}",
-        yaxis_title=f"Component {dims[1]}" if method != "lda" else "Random jitter",
+        xaxis_title=f"Component {dims[0]}",
+        yaxis_title=f"Component {dims[1]}",
         width=900,
         height=700,
         hovermode="closest",
     )
 
-    if save_path:
-        fig.write_html(save_path)
-        print(f"✓ Saved interactive {method} visualization to: {save_path}")
+    fig.show()
 
-    return embedding
 
+# %%
 
 if __name__ == "__main__":
-    # Load model
-    model_path = REPO_ROOT / "out-wiki-char/ckpt.pt"
-    model = load_model(str(model_path))
-    model.eval()
-    print(f"✓ Loaded model from {model_path}")
+    model = load_model()
+    tokenizer = CharTokenizer()
 
-    # Load tokenizer and data
-    tokenizer = CharTokenizer(vocab_path="data/wiki_char/vocab.json")
-    data_dir = REPO_ROOT / "data/wiki_char"
-    val_data = np.memmap(data_dir / "val.bin", dtype=np.uint16, mode="r")
-    print(f"✓ Loaded validation dataset: {len(val_data):,} tokens")
-
-    # Create character classes
     CHAR_CLASSES = create_char_classes(tokenizer)
 
-    # Get batch and run model
-    batch_size = 64
-    x_batch, y_batch = get_batch(val_data, batch_size, model.config.block_size)
-    output = model(x_batch, targets=y_batch, cache_enabled=True, alphas_enabled=True)
+    batch_size = 200
+    x_batch, y_batch = get_batch(batch_size=batch_size)
+    output = model(x_batch, targets=y_batch, cache_enabled=True)
     print(f"\n✓ Model output shape: {output.logits.shape}")
 
     # Static matplotlib visualization
@@ -269,8 +251,7 @@ if __name__ == "__main__":
         CHAR_CLASSES["whitespace"],
         tokenizer,
         method="pls",
-        title=f"Activations of {key.key} @ layer {key.layer}",
-        save_path="activations_pls_interactive.html",
-        context_chars=30,
+        title=f"Activations of {key}",
+        context_chars=20,
         dims=(0, 1),
     )
