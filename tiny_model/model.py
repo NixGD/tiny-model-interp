@@ -11,6 +11,10 @@ from lxt.efficient.rules import divide_gradient, identity_rule_implicit
 from pydantic import BaseModel
 from torch.nn import functional as F
 
+# Type aliases for hook management
+Activations = torch.Tensor
+HookFn = Callable[[Activations], Activations]
+
 
 class GPTConfig(BaseModel):
     block_size: int = 1024
@@ -41,24 +45,39 @@ class CacheKey(NamedTuple):
 
 
 class AlphaCache:
-    enabled: bool = False
+    _cache_enabled: bool = False
+    _alphas_enabled: bool = False
     _cache: dict[CacheKey, torch.Tensor]
     _alphas: dict[CacheKey, torch.Tensor]
+    _hooks: dict[CacheKey, HookFn]
 
-    def __init__(self, enabled: bool = False):
-        self.enabled = enabled
+    def __init__(
+        self,
+        cache_enabled: bool = False,
+        alphas_enabled: bool = False,
+        hooks: dict[CacheKey, HookFn] | None = None,
+    ):
+        self._cache_enabled = cache_enabled
+        self._alphas_enabled = alphas_enabled
         self._cache = {}
         self._alphas = {}
+        self._hooks = hooks if hooks is not None else {}
 
     def wrap(self, key: CacheKey, x: torch.Tensor) -> torch.Tensor:
         """Wraps an activation, returning identical values but storing value & gradient of that activation."""
-        if self.enabled:
+        # Apply hook if one exists for this key
+        if key in self._hooks:
+            x = self._hooks[key](x)
+
+        if self._cache_enabled:
             self._cache[key] = x.detach()
+
+        if self._alphas_enabled:
             alpha = torch.zeros_like(x, requires_grad=True)
             self._alphas[key] = alpha
             return alpha + x
-        else:
-            return x
+
+        return x
 
     def get_grad(self, key: CacheKey) -> torch.Tensor | None:
         return self._alphas[key].grad
@@ -135,7 +154,7 @@ class CausalSelfAttention(nn.Module):
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
-        
+
     @staticmethod
     def _precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
         """Precompute the frequency tensor for complex exponentials (RoPE)."""
@@ -250,13 +269,20 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None, enable_cache: bool = False) -> Out:
+    def forward(
+        self,
+        idx: torch.Tensor,
+        targets: torch.Tensor | None = None,
+        cache_enabled: bool = False,
+        alphas_enabled: bool = False,
+        hooks: dict[CacheKey, HookFn] | None = None,
+    ) -> Out:
         seqlen = idx.size(1)
         assert seqlen <= self.config.block_size, (
             f"Cannot forward sequence of length {seqlen}, block size is only {self.config.block_size}"
         )
 
-        cache = AlphaCache(enabled=enable_cache)
+        cache = AlphaCache(cache_enabled=cache_enabled, alphas_enabled=alphas_enabled, hooks=hooks)
 
         tok_emb = self.token_embed(idx)  # token embeddings of shape (b, t, n_embd)
         tok_emb = cache.wrap(CacheKey("tok_emb", None), tok_emb)
@@ -274,8 +300,15 @@ class GPT(nn.Module):
 
         return Out(logits=logits, loss=loss, cache=cache)
 
-    def __call__(self, idx: torch.Tensor, targets: torch.Tensor | None = None, enable_cache: bool = False) -> Out:
-        return self.forward(idx, targets, enable_cache)
+    def __call__(
+        self,
+        idx: torch.Tensor,
+        targets: torch.Tensor | None = None,
+        cache_enabled: bool = False,
+        alphas_enabled: bool = False,
+        hooks: dict[CacheKey, HookFn] | None = None,
+    ) -> Out:
+        return self.forward(idx, targets, cache_enabled, alphas_enabled, hooks)
 
     def configure_optimizers(
         self, weight_decay: float, learning_rate: float, betas: tuple[float, float], device_type: str

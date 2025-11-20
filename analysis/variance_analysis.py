@@ -125,7 +125,7 @@ tokenizer = CharTokenizer(vocab_path="data/wiki_char/vocab.json")
 CHAR_CLASSES = create_char_classes(tokenizer)
 
 xs, ys = get_batch(batch_size=500, block_size=model.config.block_size)
-output = model(xs, targets=ys, enable_cache=True)
+output = model(xs, targets=ys, cache_enabled=True, alphas_enabled=True)
 print(f"\n✓ Model output shape: {output.logits.shape}")
 
 

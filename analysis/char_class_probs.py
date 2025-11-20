@@ -93,7 +93,7 @@ if __name__ == "__main__":
     block_size = model.config.block_size
     x_batch, y_batch = get_batch(val_data, batch_size, block_size)
 
-    output = model(x_batch, targets=y_batch, enable_cache=True)
+    output = model(x_batch, targets=y_batch, cache_enabled=True, alphas_enabled=True)
     print("\n✓ Model output:")
     print(f"  Loss: {output.loss.item():.4f}")
     print(f"  Output shape: {output.logits.shape}")

@@ -55,7 +55,7 @@ def compute_lrp_attributions(
     model.zero_grad()
 
     # Forward pass with cache
-    output = model(x_batch, enable_cache=True)
+    output = model(x_batch, cache_enabled=True, alphas_enabled=True)
     cache = output.cache
 
     # Compute logit difference as loss
