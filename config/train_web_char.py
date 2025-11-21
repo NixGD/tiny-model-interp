@@ -1,7 +1,7 @@
 # train a character-level model on Gutenberg-BookCorpus dataset
 # uses a small subset of the full dataset
 
-out_dir = "models/web-char-11-20"
+out_dir = "models/web-char-11-20-rezero"
 eval_interval = 500
 eval_iters = 25
 log_interval = 50

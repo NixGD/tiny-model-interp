@@ -19,7 +19,7 @@ from tiny_model.utils import REPO_ROOT
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def load_model(checkpoint_path: str | Path = REPO_ROOT / "models/web-char-11-20/ckpt.pt") -> GPT:
+def load_model(checkpoint_path: str | Path = REPO_ROOT / "models/web-char-11-20-rezero-b/ckpt.pt") -> GPT:
     """Load a trained GPT model from checkpoint."""
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
     model_args = checkpoint["model_args"]
