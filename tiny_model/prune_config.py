@@ -16,6 +16,8 @@ type SeqposMaskTensor = Bool[Tensor, "batch seqpos"]
 
 type Subspace = Float[Tensor, "n_components d_model"]  # tensor must have orthonormal columns
 
+type ActivationTensor = Float[Tensor, "... d_model"]
+
 
 class SeqposMask(ABC):
     @abstractmethod
@@ -40,12 +42,10 @@ class WordMask(SeqposMask):
         return mask
 
 
-def get_replace_hook(hook_key: CacheKey, subspace: Subspace, cache: AlphaCache, centralizer: Centralizer) -> HookFn:
-    """Returns a hook which replaces the activation outside of the subspace with the value from x' (taken from the cache)."""
+def get_replace_hook(hook_key: CacheKey, subspace: Subspace, replacement_act: ActivationTensor) -> HookFn:
+    """Returns a hook which replaces the activation outside of the subspace with the replacement_activation."""
 
-    x_prime = cache.get_value(hook_key)
-
-    def project(x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+    def project(x: ActivationTensor) -> ActivationTensor:
         _subspace = subspace.to(x)
         return x @ _subspace.T @ _subspace
 
@@ -54,7 +54,26 @@ def get_replace_hook(hook_key: CacheKey, subspace: Subspace, cache: AlphaCache, 
 
         This is equal to P(x) + (x' - P(x')) = P(x - x') + x'
         """
-        return project(x - x_prime) + x_prime
+        return project(x - replacement_act) + replacement_act
+
+    return hook
+
+
+def get_permute_hook(key: CacheKey, subspace: Subspace, mask: torch.Tensor) -> HookFn:
+    def project(x: ActivationTensor) -> ActivationTensor:
+        _subspace = subspace.to(x)
+        return x @ _subspace.T @ _subspace
+
+    def shuffle(x: torch.Tensor) -> torch.Tensor:
+        return x[torch.randperm(x.shape[0])]
+
+    def hook(x: torch.Tensor) -> torch.Tensor:
+        acts_within_mask = x[mask]
+        # shuffle acts within mask
+        replacement_acts = shuffle(acts_within_mask)
+        chimera_acts = project(acts_within_mask - replacement_acts) + replacement_acts
+        x[mask] = chimera_acts
+        return x
 
     return hook
 
@@ -83,12 +102,23 @@ class PruningConfig(BaseModel, arbitrary_types_allowed=True):
         updated_seqpos = seqpos if seqpos is not Sentinel else self.seqpos
         return PruningConfig(subspaces=updated_subspaces, seqpos=cast(SeqposMask | None, updated_seqpos))
 
-    def get_hook_dict(self, other_acts_cache: AlphaCache, centralizer: Centralizer) -> dict[CacheKey, HookFn]:
+    def get_replacement_hook_dict(self, other_acts_cache: AlphaCache) -> dict[CacheKey, HookFn]:
         if self.seqpos is not None:
             raise NotImplementedError("Seqpos masking not implemented yet")
 
         hooks = {
-            key: get_replace_hook(key, subspace, other_acts_cache, centralizer)
+            key: get_replace_hook(key, subspace, other_acts_cache.get_value(key))
+            for key, subspace in self.subspaces.items()
+            if subspace is not None
+        }
+        return hooks
+
+    def get_mean_hook_dict(self, mean_acts: AlphaCache, centralizer: Centralizer) -> dict[CacheKey, HookFn]:
+        if self.seqpos is not None:
+            raise NotImplementedError("Seqpos masking not implemented yet")
+
+        hooks = {
+            key: get_replace_hook(key, subspace, centralizer.mean_activation(key))
             for key, subspace in self.subspaces.items()
             if subspace is not None
         }

@@ -8,9 +8,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
-
-LogitTensor = Float[Tensor, "... vocab_size"]
-LogitLossFn = Callable[[LogitTensor], Float[Tensor, "..."]]
+from analysis.common.loss import LogitTensor
 
 
 class CharClass:

@@ -26,7 +26,5 @@ def get_resid_attribution_vectors(
     grad = out.cache.get_grad(key)
     assert grad is not None
     acts = out.cache.get_value(key)
-    if centralizer is not None:
-        acts = centralizer.center(acts, key)
     attributions = grad * acts
     return attributions

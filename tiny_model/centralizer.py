@@ -18,3 +18,6 @@ class Centralizer:
 
     def uncenter(self, x: Float[Tensor, "... d_model"], key: CacheKey) -> Float[Tensor, "... d_model"]:
         return x + self._mean_activations[key]
+
+    def mean_activation(self, key: CacheKey):
+        return self._mean_activations[key]

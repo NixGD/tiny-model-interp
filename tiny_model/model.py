@@ -2,17 +2,16 @@
 
 import inspect
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import NamedTuple, cast
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 from lxt.efficient.rules import divide_gradient, identity_rule_implicit
 from pydantic import BaseModel
-from torch.nn import functional as F
-
-from jaxtyping import Float
 from torch import Tensor
+from torch.nn import functional as F
 
 # Type aliases for hook management
 Activations = torch.Tensor
@@ -50,8 +49,12 @@ class CacheKey(NamedTuple):
         return f"{self.key}@{self.layer}"
 
 
+# cache_enabled can be True (cache all), False (cache none), or an iterable of specific keys to cache
+CacheEnabledSpec = bool | Iterable[CacheKey]
+
+
 class AlphaCache:
-    _cache_enabled: bool = False
+    _cache_keys: set[CacheKey] | None  # None means cache all, empty set means cache none
     _alphas_enabled: bool = False
     _cache: dict[CacheKey, torch.Tensor]
     _alphas: dict[CacheKey, torch.Tensor]
@@ -59,15 +62,26 @@ class AlphaCache:
 
     def __init__(
         self,
-        cache_enabled: bool = False,
+        cache_enabled: CacheEnabledSpec = False,
         alphas_enabled: bool = False,
         hooks: dict[CacheKey, HookFn] | None = None,
     ):
-        self._cache_enabled = cache_enabled
+        if cache_enabled is True:
+            self._cache_keys = None  # None means cache all
+        elif cache_enabled is False:
+            self._cache_keys = set()  # Empty set means cache none
+        else:
+            self._cache_keys = set(cache_enabled)  # Specific keys to cache
         self._alphas_enabled = alphas_enabled
         self._hooks = hooks if hooks is not None else {}
         self._cache = {}
         self._alphas = {}
+
+    def _should_cache(self, key: CacheKey) -> bool:
+        """Check if a key should be cached."""
+        if self._cache_keys is None:
+            return True  # Cache all
+        return key in self._cache_keys
 
     def wrap(self, key: CacheKey, x: torch.Tensor) -> torch.Tensor:
         """Wraps an activation, returning identical values but storing value & gradient of that activation."""
@@ -75,7 +89,7 @@ class AlphaCache:
         if key in self._hooks:
             x = self._hooks[key](x)
 
-        if self._cache_enabled:
+        if self._should_cache(key):
             self._cache[key] = x.detach()
 
         if self._alphas_enabled:
@@ -96,13 +110,54 @@ class AlphaCache:
         return grad
 
     def get_value(self, key: CacheKey) -> torch.Tensor:
-        assert self._cache_enabled, "Must set enable_cache in forward pass"
+        assert self._cache_keys is None or self._cache_keys, "Must set cache_enabled in forward pass"
         assert self._cache, "self._cache is empty, have you run a forward pass?"
         assert key in self._cache, f"Key {key} not found in self._cache, options: {self._cache.keys()}"
         return self._cache[key]
 
     def keys(self) -> list[CacheKey]:
         return list(self._cache.keys())
+
+    @classmethod
+    def concat(cls, caches: list["AlphaCache"], dim: int = 0) -> "AlphaCache":
+        """Concatenate multiple AlphaCache objects along a dimension.
+
+        Args:
+            caches: List of AlphaCache objects to concatenate
+            dim: Dimension to concatenate along (default: 0, batch dimension)
+
+        Returns:
+            New AlphaCache with concatenated tensors
+        """
+        if not caches:
+            raise ValueError("Cannot concatenate empty list of caches")
+
+        first = caches[0]
+        # Reconstruct cache_enabled spec: None means True, empty set means False, otherwise the set
+        if first._cache_keys is None:
+            cache_enabled: CacheEnabledSpec = True
+        elif not first._cache_keys:
+            cache_enabled = False
+        else:
+            cache_enabled = first._cache_keys
+        result = cls(
+            cache_enabled=cache_enabled,
+            alphas_enabled=first._alphas_enabled,
+        )
+
+        # Concatenate cache tensors
+        if first._cache:
+            for key in first._cache.keys():
+                tensors = [c._cache[key] for c in caches]
+                result._cache[key] = torch.cat(tensors, dim=dim)
+
+        # Concatenate alpha tensors (gradients won't be preserved)
+        if first._alphas_enabled:
+            for key in first._alphas.keys():
+                tensors = [c._alphas[key] for c in caches]
+                result._alphas[key] = torch.cat(tensors, dim=dim)
+
+        return result
 
 
 class ElementwiseAffine(nn.Module):
@@ -235,6 +290,7 @@ class MLP(nn.Module):
         x = self.c_fc(x)
         x = cache.wrap(CacheKey("mlp_pre_act", self.layer), x)
         x = lxt_identity(self.lxt_enabled, self.relu, x)
+        x = cache.wrap(CacheKey("mlp_post_act", self.layer), x)
         x = self.c_proj(x)
         x = self.dropout(x)
         x = x * self.rezero
@@ -314,7 +370,7 @@ class GPT(nn.Module):
         self,
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
-        cache_enabled: bool = False,
+        cache_enabled: CacheEnabledSpec = False,
         alphas_enabled: bool = False,
         hooks: dict[CacheKey, HookFn] | None = None,
     ) -> ModelOut:
@@ -345,7 +401,7 @@ class GPT(nn.Module):
         self,
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
-        cache_enabled: bool = False,
+        cache_enabled: CacheEnabledSpec = False,
         alphas_enabled: bool = False,
         hooks: dict[CacheKey, HookFn] | None = None,
     ) -> ModelOut:

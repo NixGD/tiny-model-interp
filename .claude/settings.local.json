@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)",
+      "Bash(python data/shakespeare_char/prepare.py:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:lxt.readthedocs.io)",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(python3:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(uv run python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,19 +1,22 @@
 """Common utilities for model analysis."""
 
+import re
+from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from datasets import IterableDataset, load_dataset
 from rich.progress import track
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
-from analysis.char_classes import CharClass
-from tiny_model.model import GPT, CacheKey, GPTConfig, ModelOut
+from analysis.common.char_classes import CharClass
+from tiny_model.model import GPT, AlphaCache, CacheEnabledSpec, CacheKey, GPTConfig, HookFn, ModelOut
 from tiny_model.utils import REPO_ROOT
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -47,6 +50,52 @@ def get_batch(
     xs = torch.stack([get_seq(i) for i in ix]).to(DEVICE)
     ys = torch.stack([get_seq(i + 1) for i in ix]).to(DEVICE)
     return xs, ys
+
+
+@torch.no_grad()
+def run_batches(
+    model: GPT,
+    num_batches: int,
+    batch_size: int,
+    block_size: int = 256,
+    data_path: Path = REPO_ROOT / "data/fineweb_char" / "val.bin",
+    cache_enabled: CacheEnabledSpec = True,
+    alphas_enabled: bool = False,
+    hooks: dict[CacheKey, HookFn] | None = None,
+    show_progress: bool = True,
+) -> tuple[ModelOut, torch.Tensor, torch.Tensor]:
+    """Run multiple batches and return concatenated ModelOut with all results.
+
+    Does not support gradients.
+    """
+    outputs: list[ModelOut] = []
+    x_batches: list[torch.Tensor] = []
+    y_batches: list[torch.Tensor] = []
+
+    iterator = range(num_batches)
+    if show_progress:
+        iterator = track(iterator, description="Running batches")
+
+    for _ in iterator:
+        x, y = get_batch(batch_size, block_size, data_path)
+        out = model(x, targets=y, cache_enabled=cache_enabled, alphas_enabled=alphas_enabled, hooks=hooks)
+        outputs.append(out)
+        x_batches.append(x)
+        y_batches.append(y)
+
+    # Concatenate all results
+    all_logits = torch.cat([o.logits for o in outputs], dim=0)
+    all_x = torch.cat(x_batches, dim=0)
+    all_y = torch.cat(y_batches, dim=0)
+
+    # Average loss if computed
+    all_loss: torch.Tensor | None = None
+    if outputs[0].loss is not None:
+        all_loss = torch.stack([o.loss for o in outputs]).mean()  # type: ignore
+
+    # Concatenate caches
+    all_cache = AlphaCache.concat([o.cache for o in outputs], dim=0)
+    return ModelOut(logits=all_logits, loss=all_loss, cache=all_cache), all_x, all_y
 
 
 def to_numpy(tensor: torch.Tensor) -> np.ndarray:
@@ -131,3 +180,47 @@ def compute_pca_r2_curve(
         return reg.score(acts_in_pca, metric_values)
 
     return [_get_r2_score(n_comp) for n_comp in track(range(1, max_components + 1), description="PCA R² curve")]
+
+
+def get_most_common_words(
+    n_words: int = 100,
+    n_samples: int = 10_000,
+    dataset_name: str = "HuggingFaceFW/fineweb",
+    dataset_config: str = "sample-10BT",
+    min_word_length: int = 2,
+    seed: int = 42,
+) -> list[str]:
+    """Extract the most common words from the dataset.
+
+    Args:
+        n_words: Number of most common words to return
+        n_samples: Number of dataset examples to process
+        dataset_name: HuggingFace dataset name
+        dataset_config: Dataset configuration/subset
+        min_word_length: Minimum word length to include
+        seed: Random seed for shuffling
+
+    Returns:
+        List of the n most common words (without leading space)
+    """
+    print(f"Loading {dataset_name} ({dataset_config}) to extract {n_words} most common words...")
+
+    dataset = cast(IterableDataset, load_dataset(dataset_name, dataset_config, split="train", streaming=True))
+    dataset = dataset.shuffle(seed=seed, buffer_size=1000)  # type: ignore
+    dataset = dataset.take(n_samples)  # type: ignore
+
+    word_counts: Counter[str] = Counter()
+
+    for example in track(dataset, description="Counting words", total=n_samples):
+        text = example["text"]
+        # Extract words (alphanumeric sequences)
+        words = re.findall(r"\b[a-zA-Z]+\b", text)
+        # Filter by minimum length
+        words = [w for w in words if len(w) >= min_word_length]
+        word_counts.update(words)
+
+    most_common = [word for word, _ in word_counts.most_common(n_words)]
+    print(f"Extracted {len(most_common)} most common words from {n_samples} examples")
+    print(f"Top 10: {most_common[:10]}")
+
+    return most_common
