@@ -1,6 +1,16 @@
 """Polytope clustering analysis of MLP activations.
 
-Clusters activations based on which neurons are active (the "polytope" the activation lies in).
+This analysis clusters MLP activations based on which neurons are active (the "polytope"
+the input lies in for a ReLU network). This is a bottom-up approach: cluster first,
+then try to interpret what each cluster means.
+
+## Approach
+
+1. Compute importance-weighted embeddings: `(acts > 0) * direction` where direction
+   is the gradient of logit_diff(space vs letters) w.r.t. MLP post-activations
+2. Cluster using BisectingKMeans (100 clusters)
+3. Manually inspect clusters and assign interpretations based on string patterns
+
 """
 
 # %%
@@ -11,18 +21,18 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.cluster import KMeans
+from sklearn.cluster import BisectingKMeans
 from sklearn.metrics import silhouette_samples, silhouette_score
 
-from analysis.common.loss import get_logit_diff_loss, LogitLossFn
+from analysis.cluster_analysis import mask_predicts_cluster
+from analysis.common.loss import LogitLossFn, get_logit_diff_loss
+from analysis.common.masks import ending_mask
 from analysis.common.utils import flatten_keep_last, get_batch, load_model, to_numpy
-from tiny_model.model import CacheKey, GPT
+from tiny_model.model import GPT, CacheKey
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from tiny_model.utils import REPO_ROOT
-from analysis.cluster_analysis import mask_predicts_cluster, show_mask_errors
-from analysis.common.masks import ending_mask
 
-CACHE_PATH = REPO_ROOT / "analysis/out/polytopes/cluster_data.json"
+CACHE_PATH = REPO_ROOT / "analysis/out/polytopes/cluster_data_bisecting_kmeans.json"
 
 
 # %%
@@ -137,7 +147,7 @@ def compute_clusters(batch_size: int = 200, n_clusters: int = 100) -> ClusterDat
 
     # Cluster
     print(f"Clustering {embedding.shape[0]} samples into {n_clusters} clusters...")
-    kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+    kmeans = BisectingKMeans(n_clusters=n_clusters, random_state=0, n_init=5)
     clusters = kmeans.fit_predict(embedding)
 
     # Compute silhouette scores (expensive)
@@ -345,25 +355,30 @@ def compute_linearity_stats(
     return results
 
 
-def print_interpretation_table(
+def print_cluster_table(
     data: ClusterData,
     tokenizer: CharTokenizer,
     acts: np.ndarray | None = None,
     contributions: np.ndarray | None = None,
+    interpretations: dict[int, tuple[tuple[str, ...] | None, str]] | None = None,
     show_errors: bool = False,
     n_error_examples: int = 3,
     context_chars: int = 25,
+    sort_by: str = "silhouette",  # "silhouette", "r2", "size", "f1"
 ) -> None:
-    """Print a rich table with cluster interpretations.
+    """Print a rich table with cluster statistics and optional interpretations.
 
     Args:
         data: ClusterData with x, clusters, silhouettes
         tokenizer: CharTokenizer for decoding
         acts: Optional input activations for linearity analysis (n_samples, n_features)
         contributions: Optional output contributions for linearity analysis (n_samples,)
-        show_errors: Whether to show FP/FN example columns
+        interpretations: Optional dict mapping cluster_id -> (pattern_tuple, description).
+            If None, only shows summary stats without F1/pattern columns.
+        show_errors: Whether to show FP/FN example columns (requires interpretations)
         n_error_examples: Number of FP/FN examples to show
         context_chars: Characters of context for examples
+        sort_by: Sort order - "silhouette", "r2", "size", or "f1"
     """
     from rich.console import Console
     from rich.table import Table
@@ -377,6 +392,8 @@ def print_interpretation_table(
     linearity_stats = None
     if acts is not None and contributions is not None:
         linearity_stats = compute_linearity_stats(acts, contributions, data.clusters, data.n_clusters)
+
+    has_interpretations = interpretations is not None
 
     def decode_indices(indices: np.ndarray, n: int) -> list[str]:
         """Decode flat indices to text snippets."""
@@ -393,14 +410,18 @@ def print_interpretation_table(
         return examples
 
     # Build table
-    table = Table(title="Cluster Interpretations", show_lines=True, expand=True)
+    title = "Cluster Statistics" if not has_interpretations else "Cluster Interpretations"
+    table = Table(title=title, show_lines=True, expand=True)
     table.add_column("ID", justify="right", style="cyan", no_wrap=True)
     table.add_column("Sil", justify="right", no_wrap=True)
     table.add_column("%", justify="right", no_wrap=True)
-    table.add_column("F1", justify="right", no_wrap=True)
-    table.add_column("TPR", justify="right", no_wrap=True)
-    table.add_column("Prec", justify="right", no_wrap=True)
-    table.add_column("Pattern", min_width=20)
+
+    # Add interpretation columns only if interpretations provided
+    if has_interpretations:
+        table.add_column("F1", justify="right", no_wrap=True)
+        table.add_column("TPR", justify="right", no_wrap=True)
+        table.add_column("Prec", justify="right", no_wrap=True)
+        table.add_column("Pattern", min_width=20)
 
     # Add linearity columns if data provided
     if linearity_stats is not None:
@@ -408,54 +429,74 @@ def print_interpretation_table(
         table.add_column("R²", justify="right", no_wrap=True)
         table.add_column("ResVar", justify="right", no_wrap=True)
 
-    # Add error columns if enabled
-    if show_errors:
+    # Add error columns if enabled (requires interpretations)
+    if show_errors and has_interpretations:
         table.add_column("FP Examples", min_width=30)
         table.add_column("FN Examples", min_width=30)
 
     # Collect data for all clusters
     items = []
-    for cluster_id, (pattern, desc) in CLUSTER_INTERPRETATIONS.items():
+
+    # Determine which clusters to show
+    if has_interpretations:
+        cluster_ids = list(interpretations.keys())
+    else:
+        cluster_ids = list(range(data.n_clusters))
+
+    for cluster_id in cluster_ids:
         sil = dict(stats["sorted_clusters"]).get(cluster_id, 0)
         size = stats["cluster_sizes"].get(cluster_id, 0)
         pct = 100 * size / total_samples
-
         lin = linearity_stats.get(cluster_id, {}) if linearity_stats else {}
 
-        if pattern is None:
-            items.append((cluster_id, sil, pct, None, None, desc, [], [], lin))
+        if has_interpretations:
+            pattern, desc = interpretations[cluster_id]
+            if pattern is None:
+                items.append((cluster_id, sil, pct, None, None, desc, [], [], lin))
+            else:
+                mask = ending_mask(data.x, pattern, tokenizer)
+                mask_flat = mask.flatten().numpy()
+                in_cluster = data.clusters == cluster_id
+
+                s = mask_predicts_cluster(mask, data.clusters, cluster_id)
+
+                fp_indices = np.where(mask_flat & ~in_cluster)[0]
+                fn_indices = np.where(~mask_flat & in_cluster)[0]
+
+                fp_examples = decode_indices(fp_indices, n_error_examples) if show_errors else []
+                fn_examples = decode_indices(fn_indices, n_error_examples) if show_errors else []
+
+                items.append((cluster_id, sil, pct, s.f1, s, desc, fp_examples, fn_examples, lin))
         else:
-            mask = ending_mask(data.x, pattern, tokenizer)
-            mask_flat = mask.flatten().numpy()
-            in_cluster = data.clusters == cluster_id
+            # No interpretations - just stats
+            items.append((cluster_id, sil, pct, None, None, None, [], [], lin))
 
-            s = mask_predicts_cluster(mask, data.clusters, cluster_id)
-
-            fp_indices = np.where(mask_flat & ~in_cluster)[0]
-            fn_indices = np.where(~mask_flat & in_cluster)[0]
-
-            fp_examples = decode_indices(fp_indices, n_error_examples) if show_errors else []
-            fn_examples = decode_indices(fn_indices, n_error_examples) if show_errors else []
-
-            items.append((cluster_id, sil, pct, s.f1, s, desc, fp_examples, fn_examples, lin))
-
-    # Sort: by F1 descending, None values at end
-    items.sort(key=lambda x: (x[3] is None, -(x[3] or 0)))
+    # Sort based on sort_by parameter
+    if sort_by == "silhouette":
+        items.sort(key=lambda x: -x[1])  # sil descending
+    elif sort_by == "r2":
+        items.sort(key=lambda x: -x[8].get("r2", 0) if x[8] else 0)  # r2 descending
+    elif sort_by == "size":
+        items.sort(key=lambda x: -x[2])  # pct descending
+    elif sort_by == "f1" and has_interpretations:
+        items.sort(key=lambda x: (x[3] is None, -(x[3] or 0)))  # f1 descending, None at end
 
     for cluster_id, sil, pct, f1, s, desc, fp_ex, fn_ex, lin in items:
         row = [str(cluster_id), f"{sil:.2f}", f"{pct:.1f}"]
 
-        if f1 is None:
-            row.extend(["[dim]—[/dim]", "[dim]—[/dim]", "[dim]—[/dim]", f"[dim]{desc}[/dim]"])
-        else:
-            # Color F1 based on value
-            if f1 >= 0.9:
-                f1_str = f"[green]{f1:.2f}[/green]"
-            elif f1 >= 0.7:
-                f1_str = f"[yellow]{f1:.2f}[/yellow]"
+        # Add interpretation columns if present
+        if has_interpretations:
+            if f1 is None:
+                row.extend(["[dim]—[/dim]", "[dim]—[/dim]", "[dim]—[/dim]", f"[dim]{desc or ''}[/dim]"])
             else:
-                f1_str = f"[red]{f1:.2f}[/red]"
-            row.extend([f1_str, f"{s.tpr:.2f}", f"{s.precision:.2f}", desc])
+                # Color F1 based on value
+                if f1 >= 0.9:
+                    f1_str = f"[green]{f1:.2f}[/green]"
+                elif f1 >= 0.7:
+                    f1_str = f"[yellow]{f1:.2f}[/yellow]"
+                else:
+                    f1_str = f"[red]{f1:.2f}[/red]"
+                row.extend([f1_str, f"{s.tpr:.2f}", f"{s.precision:.2f}", desc])
 
         # Add linearity stats
         if linearity_stats is not None:
@@ -473,7 +514,7 @@ def print_interpretation_table(
                 row.extend(["—", "—", "—"])
 
         # Add error examples
-        if show_errors:
+        if show_errors and has_interpretations:
             if f1 is None:
                 row.extend(["", ""])
             else:
@@ -489,7 +530,7 @@ def print_interpretation_table(
 # %%
 if __name__ == "__main__":
     # Compute and save (run once)
-    # data = compute_clusters(batch_size=200, n_clusters=100)
+    # data = compute_clusters(batch_size=400, n_clusters=100)
     # data.save()
 
     # Load cached data
@@ -499,13 +540,12 @@ if __name__ == "__main__":
     print(f"Loaded {len(data.clusters)} samples, {data.n_clusters} clusters")
     print(f"Overall silhouette: {data.overall_silhouette:.3f}")
 
-    # Print top clusters
-    print_all_clusters(data, tokenizer, top_n=10)
-
-    # Test interpretations
-    test_interpretations(data, tokenizer)
-
-    # Print interpretation table
-
+    # Get activations for linearity stats
     acts, contributions = get_acts_and_contributions(data)
-    print_interpretation_table(data, tokenizer, acts=acts, contributions=contributions)
+
+    # Print cluster table (without interpretations - just stats)
+    print_cluster_table(data, tokenizer, acts=acts, contributions=contributions, sort_by="r2")
+
+    # To print with interpretations:
+    # print_cluster_table(data, tokenizer, acts=acts, contributions=contributions,
+    #                     interpretations=CLUSTER_INTERPRETATIONS, sort_by="f1")

@@ -2,20 +2,18 @@
 
 # %%
 
-import string
 
 import matplotlib.pyplot as plt
 import torch
 from jaxtyping import Float
-from torch import Tensor
-
 from sklearn.decomposition import FastICA
+from torch import Tensor
 
 from analysis.char_classes import LogitLossFn, LogitTensor
 from analysis.dim_reduction import visualize_activations_2d_interactive
-from analysis.masks import ending_mask, get_mask_y_token
+from analysis.masks import ending_mask
 from analysis.utils import load_model, run_batches, to_numpy
-from analysis.var_explained import get_permute_curve, pca_r2_of_x, pca_r2_of_y, pls_r2_of_y
+from analysis.var_explained import get_permute_curve, pca_r2_of_y, pls_r2_of_y
 from tiny_model.model import CacheKey
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 

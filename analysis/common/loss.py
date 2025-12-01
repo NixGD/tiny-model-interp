@@ -1,6 +1,7 @@
+from collections.abc import Callable
+
 from jaxtyping import Float
 from torch import Tensor
-from collections.abc import Callable
 
 from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 

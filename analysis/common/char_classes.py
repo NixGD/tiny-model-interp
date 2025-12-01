@@ -1,14 +1,13 @@
 """Character class definitions for analysis."""
 
 import string
-from collections.abc import Callable
 
 import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 from analysis.common.loss import LogitTensor
+from tiny_model.tokenizer.char_tokenizer import CharTokenizer
 
 
 class CharClass:
